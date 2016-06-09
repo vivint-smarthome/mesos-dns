@@ -44,6 +44,8 @@ type Config struct {
 	// Mesos master(s): a list of IP:port pairs for one or more Mesos masters
 	Masters []string
 	// DNS server: IP address of the DNS server for forwarded accesses
+	ZoneResolvers map[string][]string
+	// DNS server: IP address of the DNS server for forwarded accesses
 	Resolvers []string
 	// IPSources is the prioritized list of task IP sources
 	IPSources []string // e.g. ["host", "docker", "mesos", "rkt"]
@@ -86,6 +88,7 @@ func NewConfig() Config {
 		SOARetry:            600,
 		SOAExpire:           86400,
 		SOAMinttl:           60,
+		ZoneResolvers:       map[string][]string{},
 		Resolvers:           []string{"8.8.8.8"},
 		Listener:            "0.0.0.0",
 		HTTPListener:        "0.0.0.0",
@@ -128,6 +131,11 @@ func SetConfig(cjson string) Config {
 		logging.Error.Fatalf("IPSources validation failed: %v", err)
 	}
 
+	zoneResolversJson, err := json.Marshal(c.ZoneResolvers)
+	if err != nil {
+		zoneResolversJson = []byte("error")
+	}
+
 	c.Domain = strings.ToLower(c.Domain)
 
 	// SOA record fields
@@ -149,6 +157,8 @@ func SetConfig(cjson string) Config {
 	logging.Verbose.Println("   - TTL: ", c.TTL)
 	logging.Verbose.Println("   - Timeout: ", c.Timeout)
 	logging.Verbose.Println("   - StateTimeoutSeconds: ", c.StateTimeoutSeconds)
+
+	logging.Verbose.Println("   - ZoneResolvers: " + string(zoneResolversJson))
 	logging.Verbose.Println("   - Resolvers: " + strings.Join(c.Resolvers, ", "))
 	logging.Verbose.Println("   - ExternalOn: ", c.ExternalOn)
 	logging.Verbose.Println("   - SOAMname: " + c.SOAMname)

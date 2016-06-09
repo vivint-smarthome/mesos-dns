@@ -31,7 +31,6 @@ type Resolver struct {
 	rs      *records.RecordGenerator
 	rsLock  sync.RWMutex
 	rng     *rand.Rand
-	fwd     exchanger.Forwarder
 }
 
 // New returns a Resolver with the given version and configuration.
@@ -47,17 +46,6 @@ func New(version string, config records.Config) *Resolver {
 		rng:     rand.New(&lockedSource{src: rand.NewSource(time.Now().UnixNano())}),
 		masters: append([]string{""}, config.Masters...),
 	}
-
-	timeout := 5 * time.Second
-	if config.Timeout != 0 {
-		timeout = time.Duration(config.Timeout) * time.Second
-	}
-
-	rs := config.Resolvers
-	if !config.ExternalOn {
-		rs = rs[:0]
-	}
-	r.fwd = exchanger.NewForwarder(rs, exchangers(timeout, "udp", "tcp"))
 
 	return r
 }
@@ -96,8 +84,19 @@ func (res *Resolver) records() *records.RecordGenerator {
 func (res *Resolver) LaunchDNS() <-chan error {
 	// Handers for Mesos requests
 	dns.HandleFunc(res.config.Domain+".", panicRecover(res.HandleMesos))
-	// Handler for nonMesos requests
-	dns.HandleFunc(".", panicRecover(res.HandleNonMesos))
+	if !res.config.ExternalOn {
+		// handle with nothing
+		dns.HandleFunc(".", panicRecover(res.NonMesosHandlerFunc([]string{})))
+	} else {
+		for zone, resolvers := range res.config.ZoneResolvers {
+			dns.HandleFunc(
+				zone+".",
+				res.NonMesosHandlerFunc(resolvers))
+		}
+
+		dns.HandleFunc(".", panicRecover(res.NonMesosHandlerFunc(
+			res.config.Resolvers)))
+	}
 
 	errCh := make(chan error, 2)
 	_, e1 := res.Serve("tcp")
@@ -251,17 +250,28 @@ func shuffleAnswers(rng *rand.Rand, answers []dns.RR) []dns.RR {
 	return answers
 }
 
-// HandleNonMesos handles non-mesos queries by forwarding to configured
-// external DNS servers.
-func (res *Resolver) HandleNonMesos(w dns.ResponseWriter, r *dns.Msg) {
-	logging.CurLog.NonMesosRequests.Inc()
-	m, err := res.fwd(r, w.RemoteAddr().Network())
-	if err != nil {
-		m = new(dns.Msg).SetRcode(r, rcode(err))
-	} else if len(m.Answer) == 0 {
-		logging.CurLog.NonMesosNXDomain.Inc()
+// NonMesosHandlerFunc returns a DnsHandler func which forwards queries to the
+// provided external DNS resolvers
+func (res *Resolver) NonMesosHandlerFunc(
+	rs []string) func(dns.ResponseWriter, *dns.Msg) {
+
+	timeout := 5 * time.Second
+	if res.config.Timeout != 0 {
+		timeout = time.Duration(res.config.Timeout) * time.Second
 	}
-	reply(w, m)
+
+	fwd := exchanger.NewForwarder(rs, exchangers(timeout, "udp", "tcp"))
+
+	return func(w dns.ResponseWriter, r *dns.Msg) {
+		logging.CurLog.NonMesosRequests.Inc()
+		m, err := fwd(r, w.RemoteAddr().Network())
+		if err != nil {
+			m = new(dns.Msg).SetRcode(r, rcode(err))
+		} else if len(m.Answer) == 0 {
+			logging.CurLog.NonMesosNXDomain.Inc()
+		}
+		reply(w, m)
+	}
 }
 
 func rcode(err error) int {
