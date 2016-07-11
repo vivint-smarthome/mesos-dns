@@ -17,6 +17,12 @@ import (
 	"github.com/miekg/dns"
 )
 
+// Credentials holds a mesos-master principal / secret combination
+type Credentials struct {
+	Principal string
+	Secret    string
+}
+
 // Config holds mesos dns configuration
 type Config struct {
 	// Refresh frequency: the frequency in seconds of regenerating records (default 60)
@@ -77,6 +83,8 @@ type Config struct {
 	MesosHTTPSOn bool
 	// CA certificate to use to verify Mesos Master certificate
 	CACertFile string
+
+	Credentials Credentials
 	// IAM Config File
 	IAMConfigFile string
 
@@ -223,6 +231,12 @@ func (c Config) log() {
 	logging.Verbose.Println("   - MesosHTTPSOn", c.MesosHTTPSOn)
 	logging.Verbose.Println("   - CACertFile", c.CACertFile)
 	logging.Verbose.Println("   - IAMConfigFile", c.IAMConfigFile)
+	if c.Credentials.Principal != "" {
+		logging.Verbose.Println("   - Credentials: ", c.Credentials.Principal+":******")
+	} else {
+		logging.Verbose.Println("   - Credentials: None")
+	}
+
 }
 
 func readCACertFile(caCertFile string) (caPool *x509.CertPool, err error) {

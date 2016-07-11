@@ -170,7 +170,7 @@ func NewRecordGenerator(options ...Option) *RecordGenerator {
 // into DNS records.
 func (rg *RecordGenerator) ParseState(c Config, masters ...string) error {
 	// find master -- return if error
-	sj, err := rg.findMaster(masters...)
+	sj, err := rg.findMaster(c.Credentials, masters...)
 	if err != nil {
 		logging.Error.Println("no master")
 		return err
@@ -191,7 +191,7 @@ func (rg *RecordGenerator) ParseState(c Config, masters ...string) error {
 
 // Tries each master and looks for the leader
 // if no leader responds it errors
-func (rg *RecordGenerator) findMaster(masters ...string) (state.State, error) {
+func (rg *RecordGenerator) findMaster(credentials Credentials, masters ...string) (state.State, error) {
 	var sj state.State
 	var leader string
 
@@ -207,10 +207,10 @@ func (rg *RecordGenerator) findMaster(masters ...string) (state.State, error) {
 			logging.Error.Println(err)
 		}
 
-		if sj, err = rg.loadWrap(ip, port); err == nil && sj.Leader != "" {
+		if sj, err = rg.loadWrap(credentials, ip, port); err == nil && sj.Leader != "" {
 			return sj, nil
 		}
-		logging.Verbose.Println("Warning: Zookeeper is wrong about leader")
+		logging.Verbose.Println("Warning: Zookeeper is wrong about leader, or request failed")
 		if len(masters) == 0 {
 			return sj, errors.New("no master")
 		}
@@ -224,7 +224,7 @@ func (rg *RecordGenerator) findMaster(masters ...string) (state.State, error) {
 			logging.Error.Println(err)
 		}
 
-		if sj, err = rg.loadWrap(ip, port); err == nil && sj.Leader == "" {
+		if sj, err = rg.loadWrap(credentials, ip, port); err == nil && sj.Leader == "" {
 			logging.VeryVerbose.Println("Warning: not a leader - trying next one")
 			if len(masters)-1 == i {
 				return sj, errors.New("no master")
@@ -238,13 +238,18 @@ func (rg *RecordGenerator) findMaster(masters ...string) (state.State, error) {
 }
 
 // Loads state.json from mesos master
-func (rg *RecordGenerator) loadFromMaster(ip, port string) (state.State, error) {
+func (rg *RecordGenerator) loadFromMaster(credentials Credentials, ip,
+	port string) (state.State, error) {
 	// REFACTOR: state.json security
 
 	var sj state.State
 	u := url.URL(rg.stateEndpoint.With(urls.Host(net.JoinHostPort(ip, port))))
 
 	req, err := http.NewRequest("GET", u.String(), nil)
+	if credentials.Principal != "" {
+		req.SetBasicAuth(credentials.Principal, credentials.Secret)
+	}
+
 	if err != nil {
 		logging.Error.Println(err)
 		return state.State{}, err
@@ -279,18 +284,19 @@ func (rg *RecordGenerator) loadFromMaster(ip, port string) (state.State, error) 
 // attempts can fail from down server or mesos master secondary
 // it also reloads from a different master if the master it attempted to
 // load from was not the leader
-func (rg *RecordGenerator) loadWrap(ip, port string) (state.State, error) {
+func (rg *RecordGenerator) loadWrap(credentials Credentials, ip,
+	port string) (state.State, error) {
 	var err error
 	var sj state.State
 
 	logging.VeryVerbose.Println("reloading from master " + ip)
-	sj, err = rg.loadFromMaster(ip, port)
+	sj, err = rg.loadFromMaster(credentials, ip, port)
 	if err != nil {
 		return state.State{}, err
 	}
 	if rip := leaderIP(sj.Leader); rip != ip {
 		logging.VeryVerbose.Println("Warning: master changed to " + ip)
-		sj, err = rg.loadFromMaster(rip, port)
+		sj, err = rg.loadFromMaster(credentials, rip, port)
 		return sj, err
 	}
 	return sj, nil

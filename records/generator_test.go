@@ -340,7 +340,7 @@ func TestTimeout(t *testing.T) {
 
 	rg := NewRecordGenerator(WithConfig(Config{StateTimeoutSeconds: 1}))
 	host, port, err := net.SplitHostPort(server.Listener.Addr().String())
-	_, err = rg.loadFromMaster(host, port)
+	_, err = rg.loadFromMaster(Credentials{}, host, port)
 	if err == nil {
 		t.Fatal("Expect error because of timeout handler")
 	}
